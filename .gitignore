@@ -1,0 +1,11 @@
+# Build artifacts
+build/
+*.so
+*.o
+*.a
+tests/test_plugin
+
+# Editor & OS files
+.DS_Store
+*.swp
+*~
