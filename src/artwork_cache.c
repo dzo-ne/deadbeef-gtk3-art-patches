@@ -103,6 +103,13 @@ void artwork_cache_init(void) {
     s_pixbuf_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
     s_in_flight = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
+    if (!artwork_plugin && deadbeef) {
+        artwork_plugin = (ddb_artwork_plugin_t *)deadbeef->plug_get_for_id("artwork2");
+        if (!artwork_plugin) {
+            artwork_plugin = (ddb_artwork_plugin_t *)deadbeef->plug_get_for_id("artwork");
+        }
+    }
+
     if (artwork_plugin && artwork_plugin->allocate_source_id) {
         s_source_id = artwork_plugin->allocate_source_id();
     } else {

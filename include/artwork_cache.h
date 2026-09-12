@@ -35,4 +35,6 @@ GdkPixbuf *artwork_cache_request_track_art(ddb_playItem_t *track,
                                            artwork_load_callback_t callback,
                                            gpointer user_data);
 
+GdkPixbuf *artwork_cache_get_cached(ddb_playItem_t *track, gboolean is_folder);
+
 #endif /* __CUSTOM_MEDIALIB_ARTWORK_CACHE_H__ */

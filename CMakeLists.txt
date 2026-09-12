@@ -52,6 +52,7 @@ target_compile_options(ddb_custom_medialib PRIVATE
     -Wextra
     -O2
     -fPIC
+    -D_GNU_SOURCE
     ${GTK3_CFLAGS_OTHER}
 )
 

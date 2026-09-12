@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra -fPIC
+CFLAGS ?= -O2 -Wall -Wextra -fPIC -D_GNU_SOURCE
 LDFLAGS ?= -shared
 
 PREFIX ?= /usr/local

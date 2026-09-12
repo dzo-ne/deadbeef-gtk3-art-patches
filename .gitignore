@@ -7,5 +7,6 @@ tests/test_plugin
 
 # Editor & OS files
 .DS_Store
-*.swp
-*~
+# Upstream source clone
+deadbeef-src/
+deps/
