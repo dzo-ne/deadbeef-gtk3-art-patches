@@ -10,3 +10,10 @@ tests/test_plugin
 # Local upstream working clone (dev builds via scripts/build_gtk3_ui.sh)
 deadbeef-src/
 deps/
+
+# Old standalone plugin experiment (kept locally, not part of the patch set)
+/src/
+/include/
+/tests/
+/CMakeLists.txt
+/Makefile
