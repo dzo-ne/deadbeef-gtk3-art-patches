@@ -7,6 +7,6 @@ tests/test_plugin
 
 # Editor & OS files
 .DS_Store
-# Upstream source clone
+# Local upstream working clone (dev builds via scripts/build_gtk3_ui.sh)
 deadbeef-src/
 deps/

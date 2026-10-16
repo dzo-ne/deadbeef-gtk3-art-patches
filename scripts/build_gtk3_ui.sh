@@ -3,9 +3,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-SRC_DIR="$ROOT_DIR/deadbeef-src"
-DEPS_DIR="$ROOT_DIR/deps"
-OUT_DIR="$HOME/.local/lib/deadbeef"
+SRC_DIR="${SRC_DIR:-$ROOT_DIR/deadbeef-src}"
+VENDOR_DIR="$ROOT_DIR/vendor"
+OUT_DIR="${OUT_DIR:-$HOME/.local/lib/deadbeef}"
+DDB_PREFIX="${DDB_PREFIX:-/opt/deadbeef}"
 
 mkdir -p "$OUT_DIR"
 
@@ -39,8 +40,7 @@ SOURCES=(
 )
 
 INCLUDES=(
-    -I"$DEPS_DIR/include"
-    -I"$DEPS_DIR/jansson/usr/include"
+    -I"$VENDOR_DIR/include"
     -I"$SRC_DIR/include"
     -I"$SRC_DIR/shared"
     -I"$SRC_DIR/plugins/gtkui"
@@ -63,12 +63,11 @@ CFLAGS=(
 )
 
 LDFLAGS=(
-    -L"$DEPS_DIR/lib"
-    -L/opt/deadbeef/lib
-    -Wl,-rpath,/opt/deadbeef/lib
+    -L"$DDB_PREFIX/lib"
+    -Wl,-rpath,"$DDB_PREFIX/lib"
     -lBlocksRuntime
     -ldispatch
-    -ljansson
+    -l:libjansson.so.4
     -lm
     $(pkg-config --libs gtk+-3.0)
 )
