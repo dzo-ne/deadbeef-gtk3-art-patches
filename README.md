@@ -2,7 +2,7 @@
 
 Plug-and-play patch set for the DeaDBeeF GTK3 UI plugin. No local upstream checkout needed.
 
-- `patches/0001-medialib-cover-art-toggles.patch`: adds "Show album art on media library tracks" (`gtkui.show_medialib_track_covers`, default off) next to upstream's folder art option in the GTK UI settings, and fixes leaked refs and stale results. Track rows share one artwork request per album.
+- `patches/0001-medialib-cover-art-toggles.patch`: turns upstream's media library album art checkbox into a `None / Folders / Tracks / Folders and tracks` setting (`gtkui.show_medialib_covers`, still defaults to Folders), fixes leaked refs and stale results, and shares one artwork request per album for track rows.
 - `patches/0002-playlist-track-art-column.patch`: "Track Cover Art" playlist column with a self-contained 1000-entry LRU thumbnail cache (covermanager untouched).
 
 Both patches apply independently to upstream.
