@@ -1,23 +1,22 @@
 diff --git a/include/deadbeef/deadbeef.h b/include/deadbeef/deadbeef.h
-index d87f002..8a1d3f4 100644
+index d87f002..d8b738b 100644
 --- a/include/deadbeef/deadbeef.h
 +++ b/include/deadbeef/deadbeef.h
-@@ -585,8 +585,9 @@ enum pl_column_t {
+@@ -585,7 +585,8 @@ enum pl_column_t {
      DB_COLUMN_PLAYING = 1,
      DB_COLUMN_ALBUM_ART = 8,
  #if (DDB_API_LEVEL >= 10)
 -    DB_COLUMN_CUSTOM = 9
 +    DB_COLUMN_CUSTOM = 9,
- #endif
 +    DB_COLUMN_TRACK_ART = 10,
+ #endif
  };
  
- // replaygain constants
 diff --git a/plugins/gtkui/callbacks.c b/plugins/gtkui/callbacks.c
-index 1e35d5f..254ae92 100644
+index 1e35d5f..72b3952 100644
 --- a/plugins/gtkui/callbacks.c
 +++ b/plugins/gtkui/callbacks.c
-@@ -395,6 +395,13 @@ on_column_id_changed (GtkComboBox *combobox, gpointer user_data) {
+@@ -395,6 +395,14 @@ on_column_id_changed (GtkComboBox *combobox, gpointer user_data) {
              editcolumn_title_changed = 0;
          }
      }
@@ -25,6 +24,7 @@ index 1e35d5f..254ae92 100644
 +    if (act == find_first_preset_column_type (DB_COLUMN_TRACK_ART)) {
 +        GtkWidget *align = lookup_widget (toplevel, "align");
 +        if (align) {
++            // alignment combo box entries: 0 = left, 1 = right, 2 = center
 +            gtk_combo_box_set_active (GTK_COMBO_BOX (align), 2);
 +        }
 +    }
@@ -32,156 +32,94 @@ index 1e35d5f..254ae92 100644
  
  gboolean
 diff --git a/plugins/gtkui/playlist/playlistrenderer.c b/plugins/gtkui/playlist/playlistrenderer.c
-index ead374e..050ba8a 100644
+index ead374e..44b35ff 100644
 --- a/plugins/gtkui/playlist/playlistrenderer.c
 +++ b/plugins/gtkui/playlist/playlistrenderer.c
-@@ -35,6 +35,196 @@
+@@ -35,6 +35,134 @@
  
  extern DB_functions_t *deadbeef;
  
 +#define SENTINEL_NO_ART   ((GdkPixbuf *)0x1)
 +#define SENTINEL_PENDING  ((GdkPixbuf *)0x2)
 +#define PLAYLIST_THUMB_CACHE_MAX 1000
-+
-+typedef struct playlist_thumb_node_s {
-+    char *key;
-+    GdkPixbuf *thumb;
-+    struct playlist_thumb_node_s *prev;
-+    struct playlist_thumb_node_s *next;
-+} playlist_thumb_node_t;
++// "no art" and "pending" entries are retried after this long, in case a request was cancelled or art appeared later
++#define PLAYLIST_THUMB_RETRY_USEC (60 * G_USEC_PER_SEC)
 +
 +typedef struct {
-+    GHashTable *hash;
-+    playlist_thumb_node_t *head;
-+    playlist_thumb_node_t *tail;
-+    int count;
-+    int max_count;
-+} playlist_thumb_cache_t;
++    char *key;
++    GdkPixbuf *thumb;
++    gint64 time;
++} playlist_thumb_entry_t;
 +
-+static playlist_thumb_cache_t playlist_thumb_cache = { 0 };
++// LRU cache of scaled row thumbnails: the hash maps a key to its link in the queue, most recent first.
++static GHashTable *playlist_thumb_index;
++static GQueue playlist_thumb_lru = G_QUEUE_INIT;
 +
-+static void
-+_playlist_thumb_node_free (playlist_thumb_node_t *node) {
-+    if (node->key) {
-+        free (node->key);
-+        node->key = NULL;
-+    }
-+    if (node->thumb && node->thumb != SENTINEL_NO_ART && node->thumb != SENTINEL_PENDING) {
-+        g_object_unref (node->thumb);
-+        node->thumb = NULL;
-+    }
-+    free (node);
++static gboolean
++_playlist_thumb_is_image (GdkPixbuf *thumb) {
++    return thumb != NULL && thumb != SENTINEL_NO_ART && thumb != SENTINEL_PENDING;
 +}
 +
 +static void
-+_playlist_thumb_move_to_head (playlist_thumb_cache_t *cache, playlist_thumb_node_t *node) {
-+    if (cache->head == node) {
-+        return;
++_playlist_thumb_entry_free (playlist_thumb_entry_t *entry) {
++    if (_playlist_thumb_is_image (entry->thumb)) {
++        g_object_unref (entry->thumb);
 +    }
-+    if (node->prev) {
-+        node->prev->next = node->next;
-+    }
-+    if (node->next) {
-+        node->next->prev = node->prev;
-+    }
-+    if (cache->tail == node) {
-+        cache->tail = node->prev;
-+    }
-+    node->prev = NULL;
-+    node->next = cache->head;
-+    if (cache->head) {
-+        cache->head->prev = node;
-+    }
-+    cache->head = node;
-+    if (!cache->tail) {
-+        cache->tail = node;
-+    }
++    g_free (entry->key);
++    g_free (entry);
 +}
 +
-+static playlist_thumb_node_t *
-+_playlist_thumb_cache_get (playlist_thumb_cache_t *cache, const char *key) {
-+    if (!cache || !cache->hash || !key) {
++static playlist_thumb_entry_t *
++_playlist_thumb_cache_get (const char *key) {
++    GList *link = playlist_thumb_index ? g_hash_table_lookup (playlist_thumb_index, key) : NULL;
++    if (link == NULL) {
 +        return NULL;
 +    }
-+    playlist_thumb_node_t *node = g_hash_table_lookup (cache->hash, key);
-+    if (node) {
-+        _playlist_thumb_move_to_head (cache, node);
-+    }
-+    return node;
++    g_queue_unlink (&playlist_thumb_lru, link);
++    g_queue_push_head_link (&playlist_thumb_lru, link);
++    return link->data;
 +}
 +
 +static void
-+_playlist_thumb_cache_put (playlist_thumb_cache_t *cache, const char *key, GdkPixbuf *thumb) {
-+    if (!cache || !cache->hash || !key) {
-+        if (thumb && thumb != SENTINEL_NO_ART && thumb != SENTINEL_PENDING) {
-+            g_object_unref (thumb);
++_playlist_thumb_cache_put (const char *key, GdkPixbuf *thumb) {
++    if (playlist_thumb_index == NULL) {
++        playlist_thumb_index = g_hash_table_new (g_str_hash, g_str_equal);
++    }
++
++    playlist_thumb_entry_t *entry = _playlist_thumb_cache_get (key);
++    if (entry != NULL) {
++        if (_playlist_thumb_is_image (entry->thumb)) {
++            g_object_unref (entry->thumb);
 +        }
-+        return;
 +    }
-+
-+    playlist_thumb_node_t *node = g_hash_table_lookup (cache->hash, key);
-+    if (node) {
-+        if (node->thumb != thumb) {
-+            if (node->thumb && node->thumb != SENTINEL_NO_ART && node->thumb != SENTINEL_PENDING) {
-+                g_object_unref (node->thumb);
-+            }
-+            node->thumb = thumb;
++    else {
++        if (g_queue_get_length (&playlist_thumb_lru) >= PLAYLIST_THUMB_CACHE_MAX) {
++            GList *evict = g_queue_pop_tail_link (&playlist_thumb_lru);
++            playlist_thumb_entry_t *old = evict->data;
++            g_hash_table_remove (playlist_thumb_index, old->key);
++            _playlist_thumb_entry_free (old);
++            g_list_free_1 (evict);
 +        }
-+        _playlist_thumb_move_to_head (cache, node);
-+        return;
++        entry = g_new0 (playlist_thumb_entry_t, 1);
++        entry->key = g_strdup (key);
++        GList *link = g_list_alloc ();
++        link->data = entry;
++        g_queue_push_head_link (&playlist_thumb_lru, link);
++        g_hash_table_insert (playlist_thumb_index, entry->key, link);
 +    }
-+
-+    if (cache->count >= cache->max_count && cache->tail) {
-+        playlist_thumb_node_t *evict = cache->tail;
-+        g_hash_table_remove (cache->hash, evict->key);
-+        if (evict->prev) {
-+            evict->prev->next = NULL;
-+            cache->tail = evict->prev;
-+        }
-+        else {
-+            cache->head = cache->tail = NULL;
-+        }
-+        _playlist_thumb_node_free (evict);
-+        cache->count--;
-+    }
-+
-+    node = calloc (1, sizeof (playlist_thumb_node_t));
-+    node->key = strdup (key);
-+    node->thumb = thumb;
-+    g_hash_table_insert (cache->hash, node->key, node);
-+    _playlist_thumb_move_to_head (cache, node);
-+    cache->count++;
-+}
-+
-+static void
-+_playlist_thumb_cache_clear (playlist_thumb_cache_t *cache) {
-+    if (!cache) {
-+        return;
-+    }
-+    playlist_thumb_node_t *node = cache->head;
-+    while (node) {
-+        playlist_thumb_node_t *next = node->next;
-+        _playlist_thumb_node_free (node);
-+        node = next;
-+    }
-+    cache->head = cache->tail = NULL;
-+    cache->count = 0;
-+    if (cache->hash) {
-+        g_hash_table_remove_all (cache->hash);
-+    }
-+}
-+
-+static void
-+_playlist_thumb_cache_init_if_needed (void) {
-+    if (playlist_thumb_cache.hash == NULL) {
-+        playlist_thumb_cache.hash = g_hash_table_new (g_str_hash, g_str_equal);
-+        playlist_thumb_cache.max_count = PLAYLIST_THUMB_CACHE_MAX;
-+    }
++    entry->thumb = thumb;
++    entry->time = g_get_monotonic_time ();
 +}
 +
 +void
 +pl_common_clear_thumb_cache (void) {
-+    _playlist_thumb_cache_clear (&playlist_thumb_cache);
++    if (playlist_thumb_index != NULL) {
++        g_hash_table_remove_all (playlist_thumb_index);
++    }
++    playlist_thumb_entry_t *entry;
++    while ((entry = g_queue_pop_head (&playlist_thumb_lru)) != NULL) {
++        _playlist_thumb_entry_free (entry);
++    }
 +}
 +
 +static GdkPixbuf *
@@ -232,7 +170,7 @@ index ead374e..050ba8a 100644
  static gboolean
  tf_redraw_cb (gpointer user_data) {
      DdbListview *lv = user_data;
-@@ -68,6 +258,67 @@ pl_common_draw_column_data (DdbListview *listview, cairo_t *cr, DdbListviewIter
+@@ -68,6 +196,76 @@ pl_common_draw_column_data (DdbListview *listview, cairo_t *cr, DdbListviewIter
              cairo_fill (cr);
          }
      }
@@ -244,8 +182,6 @@ index ead374e..050ba8a 100644
 +        const int avail_h = height - pad_y * 2;
 +
 +        if (avail_w > 0 && avail_h > 0) {
-+            _playlist_thumb_cache_init_if_needed ();
-+
 +            // Key by album (folder + album tag), not by track: the cover manager caches per track,
 +            // so this way each album's cover is decoded and scaled once for all of its tracks.
 +            const char *uri = deadbeef->pl_find_meta (track, ":URI");
@@ -255,40 +191,51 @@ index ead374e..050ba8a 100644
 +            char thumb_key[1024];
 +            snprintf (thumb_key, sizeof (thumb_key), "%dx%d:%.*s|%s", avail_w, avail_h, dir_len, uri ? uri : "", album ? album : "");
 +
-+            playlist_thumb_node_t *node = _playlist_thumb_cache_get (&playlist_thumb_cache, thumb_key);
-+            if (node != NULL) {
-+                if (node->thumb != NULL && node->thumb != SENTINEL_NO_ART && node->thumb != SENTINEL_PENDING) {
-+                    _playlist_draw_thumb (cr, node->thumb, x, y, width, height, align, pad_x, pad_y);
++            playlist_thumb_entry_t *entry = _playlist_thumb_cache_get (thumb_key);
++            if (entry != NULL && !_playlist_thumb_is_image (entry->thumb) && g_get_monotonic_time () - entry->time > PLAYLIST_THUMB_RETRY_USEC) {
++                entry = NULL;
++            }
++
++            if (entry != NULL) {
++                if (_playlist_thumb_is_image (entry->thumb)) {
++                    _playlist_draw_thumb (cr, entry->thumb, x, y, width, height, align, pad_x, pad_y);
 +                }
 +            }
 +            else {
-+                _playlist_thumb_cache_put (&playlist_thumb_cache, thumb_key, SENTINEL_PENDING);
++                _playlist_thumb_cache_put (thumb_key, SENTINEL_PENDING);
 +
-+                covermanager_t *cm = covermanager_shared ();
 +                deadbeef->pl_item_ref (track);
 +                char *saved_key = strdup (thumb_key);
++                GWeakRef *listview_ref = g_new0 (GWeakRef, 1);
++                g_weak_ref_init (listview_ref, listview);
 +
-+                GdkPixbuf *image = covermanager_cover_for_track_no_default (cm, track, 0, ^(GdkPixbuf *img) {
++                GdkPixbuf *image = covermanager_cover_for_track_no_default (covermanager_shared (), track, 0, ^(GdkPixbuf *img) {
 +                    deadbeef->pl_item_unref (track);
-+                    if (img != NULL) {
-+                        GdkPixbuf *scaled = _playlist_scale_thumb (img, avail_w, avail_h);
-+                        _playlist_thumb_cache_put (&playlist_thumb_cache, saved_key, scaled ? scaled : SENTINEL_NO_ART);
-+                        if (scaled != NULL) {
-+                            gtk_widget_queue_draw (GTK_WIDGET (listview));
-+                        }
-+                    }
-+                    else {
-+                        _playlist_thumb_cache_put (&playlist_thumb_cache, saved_key, SENTINEL_NO_ART);
-+                    }
++                    GdkPixbuf *scaled = img != NULL ? _playlist_scale_thumb (img, avail_w, avail_h) : NULL;
++                    _playlist_thumb_cache_put (saved_key, scaled ? scaled : SENTINEL_NO_ART);
 +                    free (saved_key);
++
++                    // the playlist may have been destroyed while the cover was loading
++                    GtkWidget *widget = g_weak_ref_get (listview_ref);
++                    if (widget != NULL) {
++                        if (scaled != NULL) {
++                            gtk_widget_queue_draw (widget);
++                        }
++                        g_object_unref (widget);
++                    }
++                    g_weak_ref_clear (listview_ref);
++                    g_free (listview_ref);
 +                });
 +
 +                if (image != NULL) {
++                    // the cover was cached: the block above is not called
 +                    deadbeef->pl_item_unref (track);
 +                    free (saved_key);
++                    g_weak_ref_clear (listview_ref);
++                    g_free (listview_ref);
 +
 +                    GdkPixbuf *scaled = _playlist_scale_thumb (image, avail_w, avail_h);
-+                    _playlist_thumb_cache_put (&playlist_thumb_cache, thumb_key, scaled ? scaled : SENTINEL_NO_ART);
++                    _playlist_thumb_cache_put (thumb_key, scaled ? scaled : SENTINEL_NO_ART);
 +                    if (scaled != NULL) {
 +                        _playlist_draw_thumb (cr, scaled, x, y, width, height, align, pad_x, pad_y);
 +                    }
