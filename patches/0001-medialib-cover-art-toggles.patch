@@ -1,8 +1,8 @@
 diff --git a/plugins/gtkui/gtkui.c b/plugins/gtkui/gtkui.c
-index a22b7b1..d4e5713 100644
+index 505099e..7d42c07 100644
 --- a/plugins/gtkui/gtkui.c
 +++ b/plugins/gtkui/gtkui.c
-@@ -2294,7 +2294,7 @@ static const char settings_dlg[] =
+@@ -2267,7 +2267,7 @@ static const char settings_dlg[] =
      "property \"Add separators between plugin context menu items\" checkbox gtkui.action_separators 0;\n"
      "property \"Use unicode chars instead of images for track state\" checkbox gtkui.unicode_playstate 0;\n"
      "property \"Disable seekbar overlay text\" checkbox gtkui.disable_seekbar_overlay 0;\n"
@@ -12,7 +12,7 @@ index a22b7b1..d4e5713 100644
  #pragma mark - Obsolete cover art API stubs
  
 diff --git a/plugins/gtkui/medialib/medialibwidget.c b/plugins/gtkui/medialib/medialibwidget.c
-index f4f9150..e2e2b18 100644
+index 90c399b..3a6db9c 100644
 --- a/plugins/gtkui/medialib/medialibwidget.c
 +++ b/plugins/gtkui/medialib/medialibwidget.c
 @@ -28,6 +28,24 @@
@@ -93,7 +93,7 @@ index f4f9150..e2e2b18 100644
                  }
              });
          }
-@@ -748,6 +781,7 @@ _drag_data_get (GtkWidget *widget, GdkDragContext *context, GtkSelectionData *se
+@@ -762,6 +795,7 @@ _drag_data_get (GtkWidget *widget, GdkDragContext *context, GtkSelectionData *se
  static void
  _receive_cover (w_medialib_viewer_t *mlv, GtkTreePath *path, GdkPixbuf *img) {
      g_object_ref (img);
@@ -101,7 +101,7 @@ index f4f9150..e2e2b18 100644
      dispatch_async (mlv->background_queue, ^{
          // scale
          GtkAllocation a;
-@@ -761,8 +795,10 @@ _receive_cover (w_medialib_viewer_t *mlv, GtkTreePath *path, GdkPixbuf *img) {
+@@ -775,8 +809,10 @@ _receive_cover (w_medialib_viewer_t *mlv, GtkTreePath *path, GdkPixbuf *img) {
              GtkTreeStore *store = mlv->store;
              GtkTreeIter iter;
              GtkTreeModel *model = GTK_TREE_MODEL (mlv->store);
@@ -114,14 +114,14 @@ index f4f9150..e2e2b18 100644
              g_object_unref (scaled_img);
              gtk_tree_path_free (path);
              g_object_unref (img);
-@@ -770,6 +806,29 @@ _receive_cover (w_medialib_viewer_t *mlv, GtkTreePath *path, GdkPixbuf *img) {
+@@ -784,6 +820,29 @@ _receive_cover (w_medialib_viewer_t *mlv, GtkTreePath *path, GdkPixbuf *img) {
      });
  }
  
 +// Returns the first track of the album that the given track belongs to, so that all tracks of an album
 +// request the same cover and the cover manager loads the image once per album instead of once per track.
 +static ddb_playItem_t *
-+_first_track_of_album (GtkTreeModel *model, GtkTreeIter *leaf, ddb_playItem_t *track) {
++_first_track_for_any_album_track (GtkTreeModel *model, GtkTreeIter *leaf, ddb_playItem_t *track) {
 +    GtkTreeIter parent, first;
 +    if (!gtk_tree_model_iter_parent (model, &parent, leaf) || !gtk_tree_model_iter_children (model, &first, &parent)) {
 +        return track;
@@ -144,7 +144,7 @@ index f4f9150..e2e2b18 100644
  static GdkPixbuf *
  _pixbuf_cell_did_become_visible (void *ctx, const char *pathstr) {
      if (pathstr == NULL) {
-@@ -782,34 +841,51 @@ _pixbuf_cell_did_become_visible (void *ctx, const char *pathstr) {
+@@ -796,34 +855,51 @@ _pixbuf_cell_did_become_visible (void *ctx, const char *pathstr) {
  
      w_medialib_viewer_t *mlv = ctx;
      if (mlv->is_reloading) {
@@ -198,7 +198,7 @@ index f4f9150..e2e2b18 100644
 -    if (track == NULL) {
 -        return mlv->folder_icon;
 +    if (track != NULL && !is_folder) {
-+        track = _first_track_of_album (model, &iter, track);
++        track = _first_track_for_any_album_track (model, &iter, track);
      }
  
 -    if (mlv->artwork_source_id == 0) {
@@ -209,7 +209,7 @@ index f4f9150..e2e2b18 100644
      }
  
      int64_t reload_index = mlv->reload_index;
-@@ -821,12 +897,16 @@ _pixbuf_cell_did_become_visible (void *ctx, const char *pathstr) {
+@@ -835,12 +911,16 @@ _pixbuf_cell_did_become_visible (void *ctx, const char *pathstr) {
              if (reload_index == mlv->reload_index && img != NULL) {
                  _receive_cover (mlv, path, img);
              }
@@ -227,7 +227,7 @@ index f4f9150..e2e2b18 100644
  }
  
  static void
-@@ -842,7 +922,7 @@ _setup_columns (w_medialib_viewer_t *mlv) {
+@@ -856,7 +936,7 @@ _setup_columns (w_medialib_viewer_t *mlv) {
      mlv->column = col;
      gtk_tree_view_append_column (mlv->tree, col);
      gtk_tree_view_column_set_sizing (col, GTK_TREE_VIEW_COLUMN_AUTOSIZE);
@@ -236,7 +236,7 @@ index f4f9150..e2e2b18 100644
          GtkCellRenderer *rend_pixbuf = GTK_CELL_RENDERER (ml_cell_renderer_pixbuf_new (&mlv->pixbuf_cell_delegate));
          gtk_tree_view_column_pack_start (col, rend_pixbuf, FALSE);
          gtk_tree_view_column_add_attribute (col, rend_pixbuf, "path", COL_PATH);
-@@ -863,7 +943,8 @@ w_medialib_viewer_create (void) {
+@@ -877,7 +957,8 @@ w_medialib_viewer_create (void) {
      w->base.destroy = w_medialib_viewer_destroy;
      w->base.message = w_medialib_viewer_message;
  
