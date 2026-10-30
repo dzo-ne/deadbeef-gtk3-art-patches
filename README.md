@@ -21,6 +21,6 @@ Requirements: `git`, `clang`, `libgtk-3-dev`, `glib-compile-resources`, and DeaD
 
 ## After a DeaDBeeF update
 
-Change `UPSTREAM_REF` (or pass `--ref <commit|tag>`) to the matching upstream version and rerun. If a patch no longer applies, it needs a rebase.
+Change `UPSTREAM_REF` (or pass `--ref <commit|tag>`) to the matching upstream version and rerun. The pinned commit must not need a newer plugin API than your installed DeaDBeeF (the script checks and refuses otherwise): upstream moved to API 1.20 on 2026-10-28, so builds for DeaDBeeF 1.10.3 (API 1.19) must stay on commits before `231043c`. If a patch no longer applies, it needs a rebase.
 
 `scripts/build_gtk3_ui.sh` is the development build against a local clone in `deadbeef-src/` (override with `SRC_DIR`).

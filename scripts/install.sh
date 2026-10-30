@@ -14,7 +14,8 @@ usage() {
     cat <<U
 Usage: $0 [--only medialib|playlist] [--ref <commit|tag>] [--uninstall]
   --only       apply just one feature (default: both)
-  --ref        build against a different upstream commit/tag (default: UPSTREAM_REF file)
+  --ref        build against a different upstream commit/tag (default: UPSTREAM_REF file);
+               must not need a newer plugin API than the installed DeaDBeeF provides
   --uninstall  remove the installed plugin so the system one is used again
 U
 }
@@ -51,6 +52,20 @@ echo "==> Fetching upstream $UPSTREAM_REF (shallow)..."
 git init -q "$SRC"
 git -C "$SRC" fetch -q --depth 1 "$UPSTREAM_URL" "$UPSTREAM_REF"
 git -C "$SRC" checkout -q FETCH_HEAD
+
+# The plugin only loads when the running DeaDBeeF provides at least the API it was built against.
+DDB_PREFIX="${DDB_PREFIX:-/opt/deadbeef}"
+_api_minor() { sed -n 's/^#define DB_API_VERSION_MINOR \([0-9]*\).*/\1/p' "$1"; }
+INSTALLED_HEADER="$DDB_PREFIX/include/deadbeef/deadbeef.h"
+if [ -f "$INSTALLED_HEADER" ]; then
+    want="$(_api_minor "$SRC/include/deadbeef/deadbeef.h")"
+    have="$(_api_minor "$INSTALLED_HEADER")"
+    if [ "$want" -gt "$have" ]; then
+        echo "Upstream $UPSTREAM_REF needs plugin API 1.$want, but the installed DeaDBeeF has 1.$have," >&2
+        echo "so it would refuse to load the plugin. Use --ref with an older commit, or update DeaDBeeF." >&2
+        exit 1
+    fi
+fi
 
 for p in "${PATCHES[@]}"; do
     echo "==> Applying $(basename "$p")"
