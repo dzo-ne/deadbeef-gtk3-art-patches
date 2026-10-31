@@ -16,13 +16,23 @@ glib-compile-resources \
     --target="$SRC_DIR/plugins/gtkui/gtkui-gresources.c" \
     --generate-source "$SRC_DIR/plugins/gtkui/gtkui.gresources.xml"
 
+# Take the GTK UI sources from upstream's Makefile.am (GTKUI_SOURCES, plus the GTK3-only ones),
+# so that files added or moved upstream are picked up.
+GTKUI_DIR="$SRC_DIR/plugins/gtkui"
+mapfile -t GTKUI_SOURCES < <(
+    awk '/^GTKUI_SOURCES[[:space:]]*=/ { f = 1 } f { print; if ($0 !~ /\\[[:space:]]*$/) exit }' "$GTKUI_DIR/Makefile.am" \
+        | grep -oE '[^[:space:]\\]+\.c' \
+        | sed "s|^|$GTKUI_DIR/|"
+)
+if [ "${#GTKUI_SOURCES[@]}" -eq 0 ]; then
+    echo "Could not read GTKUI_SOURCES from $GTKUI_DIR/Makefile.am" >&2
+    exit 1
+fi
+
 SOURCES=(
-    "$SRC_DIR/plugins/gtkui"/*.c
-    "$SRC_DIR/plugins/gtkui/medialib"/*.c
-    "$SRC_DIR/plugins/gtkui/prefwin"/*.c
-    "$SRC_DIR/plugins/gtkui/covermanager"/*.c
-    "$SRC_DIR/plugins/gtkui/playlist"/*.c
-    "$SRC_DIR/plugins/gtkui/scriptable"/*.c
+    "${GTKUI_SOURCES[@]}"
+    "$GTKUI_DIR/deadbeefapp.c"
+    "$GTKUI_DIR/gtkui-gresources.c"
     "$SRC_DIR/shared/eqpreset.c"
     "$SRC_DIR/shared/trkproperties_shared.c"
     "$SRC_DIR/shared/analyzer/analyzer.c"
@@ -36,7 +46,6 @@ SOURCES=(
     "$SRC_DIR/shared/growableBuffer.c"
     "$SRC_DIR/shared/pluginsettings.c"
     "$SRC_DIR/shared/parser.c"
-    "$SRC_DIR/src/utf8.c"
 )
 
 INCLUDES=(
@@ -73,6 +82,18 @@ LDFLAGS=(
 )
 
 echo "==> Compiling ddb_gui_GTK3.so with clang..."
-clang "${CFLAGS[@]}" "${INCLUDES[@]}" "${SOURCES[@]}" "${LDFLAGS[@]}" -o "$OUT_DIR/ddb_gui_GTK3.so"
+TMP_SO="$(mktemp --suffix=.so)"
+trap 'rm -f "$TMP_SO"' EXIT
+clang "${CFLAGS[@]}" "${INCLUDES[@]}" "${SOURCES[@]}" "${LDFLAGS[@]}" -o "$TMP_SO"
 
+# A missing source file only shows up as an unresolved symbol when DeaDBeeF loads the plugin, so check it here,
+# before replacing the installed plugin.
+UNDEFINED="$(ldd -r "$TMP_SO" 2>&1 | grep 'undefined symbol' || true)"
+if [ -n "$UNDEFINED" ]; then
+    echo "$UNDEFINED" >&2
+    echo "Build produced a plugin with unresolved symbols, not installing it" >&2
+    exit 1
+fi
+
+install -m 755 "$TMP_SO" "$OUT_DIR/ddb_gui_GTK3.so"
 echo "==> Build successful: $OUT_DIR/ddb_gui_GTK3.so"
